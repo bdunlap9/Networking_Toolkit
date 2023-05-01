@@ -1,5 +1,3 @@
-Sure! Here's a basic README file for your PowerShell script:
-
 # Network Toolbox PowerShell script
 
 The Network Toolbox PowerShell script is a collection of functions that can be used to manage and troubleshoot network connections on a Windows machine.
