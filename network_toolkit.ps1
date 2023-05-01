@@ -343,3 +343,209 @@ function Get-ListeningSockets {
     $sockets = Get-NetTCPConnection | Where-Object { $_.State -eq "Listen" } | Select-Object LocalAddress, LocalPort, State
     $sockets | Format-Table
 }
+
+function Test-LocalVulnerabilities {
+    # Check for missing Microsoft security updates
+    Write-Host "Checking for missing Microsoft security updates..."
+    $missingUpdates = Get-CimInstance -Class Win32_QuickFixEngineering | Where-Object { $_.HotFixID.StartsWith("KB") } | Sort-Object -Property InstalledOn -Descending
+    if ($missingUpdates) {
+        Write-Host "The following Microsoft security updates are missing on this machine:"
+        $missingUpdates | Format-Table -AutoSize
+    } else {
+        Write-Host "No missing Microsoft security updates found."
+    }
+
+    # Check for missing third-party software updates
+    Write-Host "Checking for missing third-party software updates..."
+    $vulnSoftware = Find-PSAttackVulnerability -Category Software | Where-Object { $_.Severity -gt 0 }
+    if ($vulnSoftware) {
+        Write-Host "The following third-party software has known vulnerabilities and may need updating:"
+        $vulnSoftware | Select-Object Name, Severity, VulnerabilityID, Url | Format-Table -AutoSize
+    } else {
+        Write-Host "No missing third-party software updates found."
+    }
+
+    # Scan for known vulnerabilities in running processes and services
+    Write-Host "Scanning for known vulnerabilities in running processes and services..."
+    $vulnProcesses = Find-PSAttackVulnerability -Category Process
+    if ($vulnProcesses) {
+        Write-Host "The following running processes or services have known vulnerabilities:"
+        $vulnProcesses | Select-Object Name, Severity, VulnerabilityID, Url | Format-Table -AutoSize
+    } else {
+        Write-Host "No vulnerabilities found in running processes or services."
+    }
+
+    # Scan for known vulnerabilities in installed software
+    Write-Host "Scanning for known vulnerabilities in installed software..."
+    $vulnInstalledSoftware = Find-PSAttackVulnerability -Category Software
+    if ($vulnInstalledSoftware) {
+        Write-Host "The following installed software has known vulnerabilities:"
+        $vulnInstalledSoftware | Select-Object Name, Severity, VulnerabilityID, Url | Format-Table -AutoSize
+    } else {
+        Write-Host "No vulnerabilities found in installed software."
+    }
+
+    # Scan for open ports and services
+    Write-Host "Scanning for open ports and services..."
+    $openPorts = Test-NetConnection -InformationLevel Quiet -ComputerName localhost -Port 1,3,7,9,13,17,19,21,22,23,25,37,53,79,80,88,106,110,113,119,123,135,137,138,139,143,161,162,389,443,445,464,515,587,631,636,691,1433,1521,1701,1723,1900,2000,2049,2082,2083,2086,2087,2095,2096,2181,2222,2375,2376,3389,4443
+
+# Function to perform system security checks
+function Test-SystemSecurity {
+    [CmdletBinding()]
+    param()
+
+    $results = @()
+
+    # Windows updates
+    $windowsUpdates = Get-WindowsUpdate -IsInstalled | Where-Object -Property IsInstalled -EQ -Value $true | Select-Object -Property Title, Description, InstalledOn | Sort-Object -Property InstalledOn | Select-Object -First 10
+    if ($windowsUpdates) {
+        $windowsUpdatesStatus = "Not up to date"
+    } else {
+        $windowsUpdatesStatus = "Up to date"
+    }
+    $results += [pscustomobject]@{
+        Check = "Windows updates"
+        Result = $windowsUpdatesStatus
+    }
+
+    # Antivirus status
+    $antivirusStatus = Get-CimInstance -Namespace root\SecurityCenter2 -ClassName AntiVirusProduct | Select-Object -Property displayName, productState | Sort-Object -Property displayName
+    if ($antivirusStatus) {
+        $antivirusEnabled = $antivirusStatus | Where-Object -Property productState -Match -Value "^397"
+        if ($antivirusEnabled) {
+            $antivirusStatus = "Enabled"
+        } else {
+            $antivirusStatus = "Disabled"
+        }
+    } else {
+        $antivirusStatus = "Not found"
+    }
+    $results += [pscustomobject]@{
+        Check = "Antivirus status"
+        Result = $antivirusStatus
+    }
+
+    # Firewall status
+    $firewallStatus = Get-NetFirewallProfile | Select-Object -Property Name, Enabled | Sort-Object -Property Name
+    if ($firewallStatus) {
+        $firewallEnabled = $firewallStatus | Where-Object -Property Enabled -EQ -Value True
+        if ($firewallEnabled) {
+            $firewallStatus = "Enabled"
+        } else {
+            $firewallStatus = "Disabled"
+        }
+    } else {
+        $firewallStatus = "Not found"
+    }
+    $results += [pscustomobject]@{
+        Check = "Firewall status"
+        Result = $firewallStatus
+    }
+
+    # Open ports
+    $openPorts = Test-NetConnection -ComputerName $env:COMPUTERNAME | Where-Object -Property TcpTestSucceeded -EQ -Value True | Select-Object -Property ComputerName, RemotePort | Sort-Object -Property RemotePort | Select-Object -First 10
+    if ($openPorts) {
+        $openPortsStatus = "Found"
+    } else {
+        $openPortsStatus = "None found"
+    }
+    $results += [pscustomobject]@{
+        Check = "Open ports"
+        Result = $openPortsStatus
+    }
+
+    # Weak passwords
+    $weakPasswords = Get-LocalUser | Where-Object -Property PasswordNeverExpires -EQ -Value False | Where-Object -Property PasswordLastSet -NE -Value $null | Select-Object -Property Name, PasswordLastSet | Sort-Object -Property PasswordLastSet | Select-Object -First 10
+    if ($weakPasswords) {
+        $weakPasswordsStatus = "Found"
+    } else {
+        $weakPasswordsStatus = "None found"
+    }
+    $results += [pscustomobject]@{
+        Check = "Weak passwords"
+        Result = $weakPasswordsStatus
+    }
+
+     # Admin rights
+    $adminRights = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if ($adminRights) {
+        $adminRightsStatus = "Enabled"
+    } else {
+        $adminRightsStatus = "Not enabled"
+    }
+    $results += [pscustomobject]@{
+        Check = "Admin rights"
+        Result = $adminRightsStatus
+    }
+
+    # Unauthorized access
+    $unauthorizedAccess = Get-EventLog -LogName Security -InstanceId 4625 -Newest 1 -ErrorAction SilentlyContinue
+    if ($unauthorizedAccess) {
+        $unauthorizedAccessStatus = "Found"
+    } else {
+    $unauthorizedAccessStatus = "None found"
+    }
+    $results += [pscustomobject]@{
+        Check = "Unauthorized access"
+        Result = $unauthorizedAccessStatus
+    }
+
+    # Suspicious processes
+    $suspiciousProcesses = Get-Process | Where-Object { $_.Path -eq $null -and $_.SessionId -eq 0 } | Select-Object -Property Name, ProcessName, Id
+    if ($suspiciousProcesses) {
+        $suspiciousProcessesStatus = "Found"
+    } else {
+        $suspiciousProcessesStatus = "None found"
+    }
+
+    $results = [pscustomobject]@{
+        Check = "System security checks"
+        Result = $null
+    } | Select-Object Check, Result
+
+    $results += [pscustomobject]@{
+        Check = "Windows updates"
+        Result = $windowsUpdatesStatus
+    }
+
+    $results += [pscustomobject]@{
+        Check = "Antivirus status"
+        Result = $antivirusStatus
+    }
+
+    $results += [pscustomobject]@{
+        Check = "Firewall status"
+        Result = $firewallStatus
+    }
+
+    $results += [pscustomobject]@{
+        Check = "Open ports"
+        Result = $openPortsStatus
+    }
+
+    $results += [pscustomobject]@{
+        Check = "Weak passwords"
+        Result = $weakPasswordsStatus
+    }
+
+    $results += [pscustomobject]@{
+        Check = "Outdated software"
+        Result = $outdatedSoftwareStatus
+    }
+
+    $results += [pscustomobject]@{
+        Check = "Admin rights"
+        Result = $adminRightsStatus
+    }
+
+    $results += [pscustomobject]@{
+        Check = "Unauthorized access"
+        Result = $unauthorizedAccessStatus
+    }
+
+    $results += [pscustomobject]@{
+        Check = "Suspicious processes"
+        Result = $suspiciousProcessesStatus
+    }
+
+    $results | Format-Table -AutoSize
