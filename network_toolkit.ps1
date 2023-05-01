@@ -388,6 +388,7 @@ function Test-LocalVulnerabilities {
     # Scan for open ports and services
     Write-Host "Scanning for open ports and services..."
     $openPorts = Test-NetConnection -InformationLevel Quiet -ComputerName localhost -Port 1,3,7,9,13,17,19,21,22,23,25,37,53,79,80,88,106,110,113,119,123,135,137,138,139,143,161,162,389,443,445,464,515,587,631,636,691,1433,1521,1701,1723,1900,2000,2049,2082,2083,2086,2087,2095,2096,2181,2222,2375,2376,3389,4443
+}
 
 # Function to perform system security checks
 function Test-SystemSecurity {
@@ -549,3 +550,4 @@ function Test-SystemSecurity {
     }
 
     $results | Format-Table -AutoSize
+}
